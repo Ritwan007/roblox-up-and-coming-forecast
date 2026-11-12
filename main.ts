@@ -24,6 +24,13 @@
 //     it is what a brand-new game (never in the history) scores if it breaks in.
 //   * top10 orders the games by their expected place under the same distribution.
 //
+// v2 calibration (holdout-validated against v1 on the practice history; see
+// dev/improve-log.md): the mean reversion is slower (phi 0.99), and each place's
+// assembled distribution is post-processed — rows below 0.01 are dropped (their mass
+// joins the unnamed share, which covers the ~1/3 of future top-10 slots taken by
+// games too deep in the current chart to name) and the survivors are sharpened with
+// a 1.15 temperature at constant named sum.
+//
 // Deterministic: a fixed-seed PRNG only; no clock, no network, no Math.random.
 // Reads $INPUT_DIR (else $MAKEFUN_INPUT_DIR, else /input), writes $OUTPUT_DIR
 // (else $MAKEFUN_OUTPUT_DIR, else /output). Node standard library only.
@@ -39,7 +46,7 @@ const P = Object.assign(
   {
     hlFast: 4, // hours: half-life of the "current level" average
     hlSlow: 160, // hours: half-life of the long-run level average
-    phi: 0.982, // hourly mean-reversion persistence of strength
+    phi: 0.99, // hourly mean-reversion persistence of strength (v2: raised from 0.982)
     sigmaInf: 2.2, // long-horizon strength noise (log-rank units)
     sigma0: 0.12, // immediate noise floor
     momWindow: 36, // hours of reads used for the momentum slope
@@ -55,7 +62,9 @@ const P = Object.assign(
     occBlend: 0.06, // weight of the empirical occupancy distribution
     occHalfLife: 30, // hours: decay for the occupancy distribution
     unnamed: 0.03, // share of each place left unnamed (covers brand-new games)
-    pMin: 0.0006, // drop named probabilities below this
+    pMin: 0.0006, // drop named probabilities below this (blend stage)
+    postMin: 0.01, // v2: drop assembled rows below this (mass joins the unnamed share)
+    tempTau: 1.15, // v2: temperature sharpening of each place's kept rows
     sims: 1600, // Monte Carlo rankings per hour
     seed: 20261113,
     candY: -4.9, // candidates must have fast or slow level above this (about rank 130)
@@ -439,11 +448,26 @@ for (let k = 1; k <= places; k++) {
     sum = target;
   }
   rows.sort((a, b) => b.p - a.p || a.id - b.id);
-  const kept = rows.slice(0, 100);
+  let kept = rows.slice(0, 100);
   if (P.renorm) {
     const ks = kept.reduce((a, r) => a + r.p, 0);
     if (ks > 0 && ks < target) {
       const f = target / ks;
+      for (const r of kept) r.p *= f;
+    }
+  }
+  // v2 post-processing: drop the long tail of tiny rows (their mass joins the
+  // unnamed share), then sharpen the survivors at constant named sum.
+  if (P.postMin > 0) kept = kept.filter((r) => r.p >= P.postMin);
+  if (P.tempTau !== 1 && kept.length > 0) {
+    const s0 = kept.reduce((a, r) => a + r.p, 0);
+    let sw = 0;
+    for (const r of kept) {
+      r.p = Math.pow(r.p, P.tempTau);
+      sw += r.p;
+    }
+    if (s0 > 0 && sw > 0) {
+      const f = s0 / sw;
       for (const r of kept) r.p *= f;
     }
   }

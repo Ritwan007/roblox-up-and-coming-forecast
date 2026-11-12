@@ -18,18 +18,25 @@
 //     `created` date (from the reads' details, when present) is 28+ days before an hour
 //     are removed from that hour's chart, as the real chart drops them.
 //   * Ranking each simulated hour and counting places gives, per place, a probability
-//     for every game. A small share of each place is blended with the recent empirical
-//     place-occupancy distribution, tiny probabilities are dropped, and a slice of each
-//     place is left unnamed on purpose: the scorer shares it over the read's chart, so
-//     it is what a brand-new game (never in the history) scores if it breaks in.
+//     for every game. (An empirical place-occupancy blend is implemented but weighted
+//     0 — round-3 holdout tests showed it costs score at the calibrated post point.)
+//     Tiny probabilities are dropped, and a slice of each place is left unnamed on
+//     purpose: the scorer shares it over the read's chart, so it is what a brand-new
+//     game (never in the history) scores if it breaks in.
 //   * top10 orders the games by their expected place under the same distribution.
 //
 // v2 calibration (holdout-validated against v1 on the practice history; see
 // dev/improve-log.md): the mean reversion is slower (phi 0.99), and each place's
-// assembled distribution is post-processed — rows below 0.01 are dropped (their mass
-// joins the unnamed share, which covers the ~1/3 of future top-10 slots taken by
-// games too deep in the current chart to name) and the survivors are sharpened with
-// a 1.15 temperature at constant named sum.
+// assembled distribution is post-processed — rows below the drop threshold are
+// dropped (their mass joins the unnamed share, which covers the ~1/3 of future
+// top-10 slots taken by games too deep in the current chart to name) and the
+// survivors are sharpened with a 1.15 temperature at constant named sum.
+//
+// v3 calibration (round 3, same holdout gates; see dev/improve-log.md): the
+// empirical occupancy blend is switched off (occBlend 0.06 -> 0) and the drop
+// threshold moves 0.01 -> 0.011. Holdout vs v2: headline mean log score
+// -35.940 vs -36.074, robustness margin +10.742 vs +10.561, confirmed under a
+// second PRNG seed as well.
 //
 // Deterministic: a fixed-seed PRNG only; no clock, no network, no Math.random.
 // Reads $INPUT_DIR (else $MAKEFUN_INPUT_DIR, else /input), writes $OUTPUT_DIR
@@ -59,11 +66,11 @@ const P = Object.assign(
     volPow: 0, // per-game volatility scaling exponent for the noise (0 = off)
     kernBlend: 0, // weight of the empirical rank-transition kernel forecast
     renorm: 0, // rescale each place's kept rows back to the (1 - unnamed) target
-    occBlend: 0.06, // weight of the empirical occupancy distribution
+    occBlend: 0, // weight of the empirical occupancy distribution (v3: 0, see below)
     occHalfLife: 30, // hours: decay for the occupancy distribution
     unnamed: 0.03, // share of each place left unnamed (covers brand-new games)
     pMin: 0.0006, // drop named probabilities below this (blend stage)
-    postMin: 0.01, // v2: drop assembled rows below this (mass joins the unnamed share)
+    postMin: 0.011, // v2: drop assembled rows below this (v3: 0.011)
     tempTau: 1.15, // v2: temperature sharpening of each place's kept rows
     sims: 1600, // Monte Carlo rankings per hour
     seed: 20261113,
